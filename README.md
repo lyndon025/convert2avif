@@ -8,6 +8,8 @@ Simple GUI to convert common image files to AVIF. Drag and drop supported.
 3. pip install -r requirements.txt
 4. python converter.py
 
+Release: https://github.com/lyndon025/convert2avif/releases
+
 ## Build EXE
 1. pip install pyinstaller
 2. pyinstaller --onefile --windowed --name convert2avif --icon convert2avif.ico --hidden-import pillow_avif --collect-data pillow_avif --collect-all tkinterdnd2 --add-data "convert2avif.ico;." converter.py
