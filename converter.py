@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-# converter.py — Light theme, DnD, visible Convert button, DPI fix
-import sys, threading
+# converter.py - AVIF Converter GUI (light theme, DnD optional, no extra window)
+
+import os
+import sys
+import threading
 from pathlib import Path
 from typing import List, Optional
 
-# Windows DPI awareness to avoid blurry UI
+# Windows DPI awareness so the UI is not blurry
 try:
     import ctypes
     try:
@@ -18,20 +21,30 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from PIL import Image
 
-# AVIF plugin registers on import
+# AVIF plugin
 try:
     import pillow_avif  # noqa: F401
-except ImportError:
-    messagebox.showerror("Missing plugin", "Install Pillow and pillow-avif-plugin:\n\npip install pillow pillow-avif-plugin")
+except Exception:
+    print("Install Pillow and pillow-avif-plugin: pip install pillow pillow-avif-plugin")
     sys.exit(1)
 
+def resource_path(rel: str) -> str:
+    try:
+        base = sys._MEIPASS  # set by PyInstaller
+    except Exception:
+        base = os.path.abspath(".")
+    return os.path.join(base, rel)
+
 # Optional drag and drop
-_HAS_DND = False
+DND_AVAILABLE = False
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD  # pip install tkinterdnd2
-    _HAS_DND = True
+    class BaseTk(TkinterDnD.Tk):
+        pass
+    DND_AVAILABLE = True
 except Exception:
-    TkinterDnD = object  # fallback
+    DND_FILES = None
+    BaseTk = tk.Tk
 
 COMMON_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".gif"}
 
@@ -52,7 +65,7 @@ def save_avif(im: Image.Image, out_path: Path, quality: int, speed: int, lossles
         params["exif"] = im.info["exif"]
     if "icc_profile" in im.info:
         params["icc_profile"] = im.info["icc_profile"]
-    im.save(out_path, **params)
+    im.save(out_path, **params)  # fixed: removed stray }
 
 def convert_one(src: Path, dst_dir: Path, overwrite: bool, quality: int, speed: int, lossless: bool, keep_exif: bool, prefix: Optional[str]) -> Optional[str]:
     try:
@@ -77,14 +90,23 @@ def convert_one(src: Path, dst_dir: Path, overwrite: bool, quality: int, speed: 
     except Exception as e:
         return f"Failed {src.name}: {e}"
 
-class App((TkinterDnD if _HAS_DND else tk).Tk):
+class App(BaseTk):
     def __init__(self):
         super().__init__()
         self.title("AVIF Converter")
+
+        # Theme must be set after root exists
         try:
-            ttk.Style().theme_use("vista")
+            ttk.Style(self).theme_use("vista")
         except Exception:
             pass
+
+        # Window and exe icon
+        try:
+            self.iconbitmap(resource_path("convert2avif.ico"))
+        except Exception:
+            pass
+
         self.minsize(880, 560)
         self.geometry("940x620")
         self.resizable(True, True)
@@ -108,7 +130,7 @@ class App((TkinterDnD if _HAS_DND else tk).Tk):
     def _build_menu(self):
         m = tk.Menu(self)
         act = tk.Menu(m, tearoff=0)
-        act.add_command(label="Convert    Ctrl+Enter", command=self.start_conversion)
+        act.add_command(label="Convert  Ctrl+Enter", command=self.start_conversion)
         act.add_separator()
         act.add_command(label="Quit", command=self.destroy)
         m.add_cascade(label="Actions", menu=act)
@@ -117,7 +139,6 @@ class App((TkinterDnD if _HAS_DND else tk).Tk):
     def _build_ui(self):
         pad = {"padx": 12, "pady": 8}
 
-        # Source
         frm_src = ttk.LabelFrame(self, text="Source")
         frm_src.pack(fill="x", **pad)
         row_src = ttk.Frame(frm_src); row_src.pack(fill="x", pady=4)
@@ -127,7 +148,6 @@ class App((TkinterDnD if _HAS_DND else tk).Tk):
         self.src_drop = tk.Label(frm_src, text="Drop a file or folder here", relief="groove", height=2, anchor="center")
         self.src_drop.pack(fill="x", pady=6)
 
-        # Destination
         frm_dst = ttk.LabelFrame(self, text="Destination")
         frm_dst.pack(fill="x", **pad)
         row_dst = ttk.Frame(frm_dst); row_dst.pack(fill="x", pady=4)
@@ -136,7 +156,6 @@ class App((TkinterDnD if _HAS_DND else tk).Tk):
         self.dst_drop = tk.Label(frm_dst, text="Drop a folder here", relief="groove", height=2, anchor="center")
         self.dst_drop.pack(fill="x", pady=6)
 
-        # Options
         frm_opts = ttk.LabelFrame(self, text="Options")
         frm_opts.pack(fill="x", **pad)
         left = ttk.Frame(frm_opts); left.pack(side="left", fill="x", expand=True)
@@ -144,6 +163,7 @@ class App((TkinterDnD if _HAS_DND else tk).Tk):
         ttk.Checkbutton(left, text="Overwrite", variable=self.overwrite_var).pack(anchor="w")
         ttk.Checkbutton(left, text="Keep EXIF and ICC", variable=self.keep_exif_var).pack(anchor="w")
         ttk.Checkbutton(left, text="Lossless", variable=self.lossless_var).pack(anchor="w")
+
         right = ttk.Frame(frm_opts); right.pack(side="left", fill="x", expand=True)
         r1 = ttk.Frame(right); r1.pack(fill="x", pady=2)
         ttk.Label(r1, text="Quality 0..100").pack(side="left")
@@ -155,20 +175,17 @@ class App((TkinterDnD if _HAS_DND else tk).Tk):
         ttk.Label(r3, text="Filename prefix").pack(side="left")
         ttk.Entry(r3, textvariable=self.prefix_var, width=24).pack(side="left", padx=8)
 
-        # Progress + status
         frm_prog = ttk.Frame(self); frm_prog.pack(fill="x", **pad)
         self.prog = ttk.Progressbar(frm_prog, mode="determinate"); self.prog.pack(fill="x")
         ttk.Label(frm_prog, textvariable=self.status_var).pack(anchor="w", pady=(6, 0))
 
-        # Bottom buttons, pinned to bottom
         frm_btn = ttk.Frame(self)
         frm_btn.pack(fill="x", side="bottom", padx=12, pady=12)
         self.btn_convert = ttk.Button(frm_btn, text="Convert", command=self.start_conversion)
         self.btn_convert.pack(side="left")
         ttk.Button(frm_btn, text="Quit", command=self.destroy).pack(side="right")
 
-        # DnD
-        if _HAS_DND:
+        if DND_AVAILABLE:
             for w in (self.src_drop, self.dst_drop):
                 w.drop_target_register(DND_FILES)
             self.src_drop.dnd_bind("<<Drop>>", self._on_drop_src)
@@ -187,7 +204,7 @@ class App((TkinterDnD if _HAS_DND else tk).Tk):
         p = filedialog.askdirectory(title="Select destination folder")
         if p: self.dst_var.set(p)
 
-    # DnD handlers
+    # DnD helpers
     def _split_dnd_paths(self, data: str) -> List[str]:
         try:
             return [str(p) for p in self.tk.splitlist(data)]
@@ -209,11 +226,9 @@ class App((TkinterDnD if _HAS_DND else tk).Tk):
         src = Path(self.src_var.get().strip()).expanduser()
         dst = Path(self.dst_var.get().strip()).expanduser()
         if not src.exists():
-            messagebox.showerror("Error", "Pick a valid source file or folder")
-            return
+            messagebox.showerror("Error", "Pick a valid source file or folder"); return
         if not dst:
-            messagebox.showerror("Error", "Pick a destination folder")
-            return
+            messagebox.showerror("Error", "Pick a destination folder"); return
         dst.mkdir(parents=True, exist_ok=True)
 
         recursive = self.recursive_var.get()
@@ -226,22 +241,23 @@ class App((TkinterDnD if _HAS_DND else tk).Tk):
 
         items = collect_images(src, recursive=recursive)
         if not items:
-            messagebox.showinfo("Nothing to do", "No supported images found")
-            return
+            messagebox.showinfo("Nothing to do", "No supported images found"); return
 
         self.btn_convert.config(state="disabled")
         self.prog.config(value=0, maximum=len(items))
         self.status_var.set(f"Converting {len(items)} file(s)...")
 
+        def ui(fn, *a, **k): self.after(0, lambda: fn(*a, **k))
+
         def worker():
             errors = 0
             for i, item in enumerate(items, start=1):
                 msg = convert_one(item, dst, overwrite, quality, speed, lossless, keep_exif, prefix)
-                self.prog.after(0, lambda v=i: self.prog.config(value=v))
+                ui(self.prog.config, value=i)
                 if msg: errors += 1
-                self.status_var.set(f"{i}/{len(items)}")
-            self.status_var.set(f"Done. {len(items)-errors} succeeded, {errors} failed. Output: {dst}")
-            self.btn_convert.after(0, lambda: self.btn_convert.config(state="normal"))
+                ui(self.status_var.set, f"{i}/{len(items)}")
+            ui(self.status_var.set, f"Done. {len(items)-errors} succeeded, {errors} failed. Output: {dst}")
+            ui(self.btn_convert.config, state="normal")
 
         threading.Thread(target=worker, daemon=True).start()
 

@@ -1,0 +1,7 @@
+pyinstaller --onefile --windowed --name convert2avif `
+  --icon convert2avif.ico `
+  --hidden-import pillow_avif `
+  --collect-data pillow_avif `
+  --collect-all tkinterdnd2 `
+  --add-data "convert2avif.ico;." `
+  converter.py
